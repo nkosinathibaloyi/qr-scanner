@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR Label Scanner Mobile</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;padding:12px;background:#f5f5f5}
+.card{background:white;padding:12px;border-radius:12px;margin-bottom:12px}
+button{padding:14px 18px;border:none;border-radius:10px;background:#0f766e;color:white;font-size:16px;margin:4px}
+video{width:100%;border-radius:10px;max-height:60vh}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ddd;padding:6px}
+</style>
+</head>
+<body>
+<h2>QR Label Scanner Mobile</h2>
+<div class='card'>
+<button id='cam'>Start Camera</button>
+<input id='file' type='file' accept='image/*' capture='environment' multiple>
+<div id='vwrap' style='display:none'><video id='v' playsinline muted></video></div>
+<div id='msg'>Ready to scan.</div>
+</div>
+<div class='card'>
+<button id='xl' disabled>Download Excel</button>
+<button id='csv' disabled>Download CSV</button>
+<div>Scanned: <span id='n'>0</span></div>
+<table id='t'></table>
+</div>
+<script>
+let rows=[],seen={},stream=null,raf;
+const $=id=>document.getElementById(id);
+function save(name,data,type){const blob=new Blob([data],{type:type});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href);}
+function render(){ $('n').textContent=rows.length; $('xl').disabled=$('csv').disabled=!rows.length; let h='<tr><th>Time</th><th>QR Code</th></tr>'; rows.forEach(r=>h+=`<tr><td>${r.time}</td><td>${r.raw}</td></tr>`); $('t').innerHTML=h; }
+function add(code){ if(seen[code]) return; seen[code]=1; rows.push({time:new Date().toLocaleString(),raw:code}); render(); }
+$('cam').onclick=async()=>{ if(stream) return; stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}); v.srcObject=stream; vwrap.style.display='block'; await v.play(); const c=document.createElement('canvas'); const x=c.getContext('2d'); (function scan(){ if(!stream) return; c.width=v.videoWidth;c.height=v.videoHeight;x.drawImage(v,0,0); let d=x.getImageData(0,0,c.width,c.height); let qr=jsQR(d.data,d.width,d.height); if(qr) add(qr.data); raf=requestAnimationFrame(scan); })(); };
+$('csv').onclick=()=>{ let s='Time,QRCode\n'+rows.map(r=>`"${r.time}","${r.raw}"`).join('\n'); save('qr-scans.csv',s,'text/csv'); };
+$('xl').onclick=()=>{ let ws=XLSX.utils.json_to_sheet(rows); let wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Scans'); let out=XLSX.write(wb,{bookType:'xlsx',type:'array'}); save('qr-scans.xlsx',out,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); };
+</script>
+</body>
+</html>
