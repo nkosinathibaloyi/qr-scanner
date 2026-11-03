@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR Label Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f6f7f9;--card:#fff;--tx:#1a1d21;--mu:#6b7280;--ac:#0f766e;--bd:#e2e5ea;--er:#b91c1c}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14161a;--card:#1d2026;--tx:#eceef1;--mu:#9aa1ad;--ac:#2dd4bf;--bd:#2d313a;--er:#f87171}}
+:root[data-theme="dark"]{--bg:#14161a;--card:#1d2026;--tx:#eceef1;--mu:#9aa1ad;--ac:#2dd4bf;--bd:#2d313a;--er:#f87171}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;padding:14px;max-width:900px;margin-inline:auto}
+h1{font-size:20px;margin:4px 0 12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button,label.btn{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:10px 14px;font:inherit;font-weight:600;cursor:pointer}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button,:root:not([data-theme="light"]) label.btn{color:#04201c}}
+button.sec,label.sec{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+button:disabled{opacity:.45}
+#vwrap{position:relative;display:none;margin-top:10px;border-radius:10px;overflow:hidden;background:#000}
+video{width:100%;max-height:50vh;display:block}
+#msg{margin-top:8px;color:var(--mu);font-size:13px;min-height:18px}
+#msg.err{color:var(--er)}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}
+th{color:var(--mu);font-weight:600}
+td.x{cursor:pointer;color:var(--er);font-weight:700}
+.opt{display:flex;align-items:center;gap:6px;margin-top:10px;color:var(--mu);font-size:13px}
+.cnt{font-weight:700}
+</style>
+</head>
+<body>
+<h1>QR Label Scanner</h1>
+<div class="card">
+  <div class="row">
+    <button id="cam">Start camera</button>
+    <label class="btn sec">Scan photo(s)<input id="file" type="file" accept="image/*" multiple hidden></label>
+  </div>
+  <div id="vwrap"><video id="v" playsinline muted></video></div>
+  <div class="opt"><input type="checkbox" id="dedupe" checked><label for="dedupe">Skip duplicate codes</label></div>
+  <div id="msg">Point the camera at a label QR code, or upload a photo with one or more labels.</div>
+</div>
+<div class="card">
+  <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+    <div><span class="cnt" id="n">0</span> scanned</div>
+    <div class="row">
+      <button id="xl" disabled>Download .xlsx</button>
+      <button id="csv" class="sec" disabled>.csv</button>
+      <button id="clr" class="sec" disabled>Clear</button>
+    </div>
+  </div>
+  <div class="tw"><table id="t"></table></div>
+</div>
+<script>
+(function(){
+var rows=[],seen={},stream=null,raf=0,last=0;
+var $=function(i){return document.getElementById(i)};
+function msg(t,e){var m=$('msg');m.textContent=t;m.className=e?'err':''}
+function parse(raw){
+  var f=[];
+  try{var j=JSON.parse(raw);if(j&&typeof j==='object'&&!Array.isArray(j)){return Object.keys(j).map(function(k){return [k,String(j[k])]})}}catch(e){}
+  var parts=/[|;\t,\n]/.test(raw)?raw.split(/[|;\t,\n]/):[raw];
+  return parts.map(function(p,i){var s=p.trim(),m=s.match(/^([A-Za-z0-9 _.\/-]{1,24})[:=]\s*(.+)$/);return m?[m[1],m[2]]:['Field '+(i+1),s]});
+}
+function add(raw){
+  if($('dedupe').checked&&seen[raw])return false;
+  seen[raw]=1;
+  rows.push({time:new Date().toLocaleString(),raw:raw,f:parse(raw)});
+  try{if(navigator.vibrate)navigator.vibrate(60)}catch(e){}
+  render();return true;
+}
+function cols(){var c=[];rows.forEach(function(r){r.f.forEach(function(p){if(c.indexOf(p[0])<0)c.push(p[0])})});return c}
+function matrix(){
+  var c=cols(),h=['#','Scanned at','Raw data'].concat(c),out=[h];
+  rows.forEach(function(r,i){var m={};r.f.forEach(function(p){m[p[0]]=p[1]});out.push([i+1,r.time,r.raw].concat(c.map(function(k){return m[k]||''})))});
+  return out;
+}
+function render(){
+  var m=matrix(),t=$('t'),h='';
+  if(!rows.length){t.innerHTML='';}else{
+    h='<tr>'+m[0].map(function(x){return '<th>'+esc(x)+'</th>'}).join('')+'<th></th></tr>';
+    for(var i=1;i<m.length;i++)h+='<tr>'+m[i].map(function(x){return '<td>'+esc(String(x))+'</td>'}).join('')+'<td class="x" data-i="'+(i-1)+'">×</td></tr>';
+    t.innerHTML=h;
+  }
+  $('n').textContent=rows.length;
+  ['xl','csv','clr'].forEach(function(b){$(b).disabled=!rows.length});
+}
+function esc(s){return s.replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+$('t').addEventListener('click',function(e){var i=e.target.getAttribute&&e.target.getAttribute('data-i');if(i!==null&&i!==undefined&&e.target.className==='x'){var r=rows.splice(+i,1)[0];delete seen[r.raw];render()}});
+$('clr').onclick=function(){rows=[];seen={};render()};
+
+/* camera */
+function stop(){cancelAnimationFrame(raf);if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}$('vwrap').style.display='none';$('cam').textContent='Start camera'}
+$('cam').onclick=async function(){
+  if(stream){stop();msg('Camera stopped.');return}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280}},audio:false});
+  }catch(e){msg('Camera unavailable here. Use “Scan photo(s)” instead — it opens your camera or gallery.',true);return}
+  var v=$('v');v.srcObject=stream;$('vwrap').style.display='block';await v.play();$('cam').textContent='Stop camera';msg('Scanning…');
+  var cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
+  (function tick(){
+    if(!stream)return;
+    if(v.readyState>=2&&Date.now()-last>120){
+      last=Date.now();cv.width=v.videoWidth;cv.height=v.videoHeight;cx.drawImage(v,0,0);
+      var id=cx.getImageData(0,0,cv.width,cv.height),c=jsQR(id.data,id.width,id.height,{inversionAttempts:'attemptBoth'});
+      if(c&&c.data){var ok=add(c.data);msg(ok?'Scanned: '+c.data.slice(0,60):'Duplicate skipped.')}
+    }
+    raf=requestAnimationFrame(tick);
+  })();
+};
+
+/* photos: find every code by blanking each one once decoded */
+function loadImg(f){return new Promise(function(res,rej){var u=URL.createObjectURL(f),i=new Image();i.onload=function(){URL.revokeObjectURL(u);res(i)};i.onerror=rej;i.src=u})}
+function findAll(img){
+  var found=[],s=Math.min(1,2400/Math.max(img.width,img.height)),w=Math.round(img.width*s),h=Math.round(img.height*s);
+  var cv=document.createElement('canvas');cv.width=w;cv.height=h;var cx=cv.getContext('2d',{willReadFrequently:true});
+  cx.drawImage(img,0,0,w,h);
+  function pass(x,y,ww,hh){
+    for(var k=0;k<40;k++){
+      var d=cx.getImageData(x,y,ww,hh),c=jsQR(d.data,ww,hh,{inversionAttempts:'attemptBoth'});
+      if(!c||!c.data)break;
+      if(found.indexOf(c.data)<0)found.push(c.data);
+      var L=c.location,xs=[L.topLeftCorner.x,L.topRightCorner.x,L.bottomLeftCorner.x,L.bottomRightCorner.x],ys=[L.topLeftCorner.y,L.topRightCorner.y,L.bottomLeftCorner.y,L.bottomRightCorner.y];
+      var x0=Math.min.apply(0,xs),x1=Math.max.apply(0,xs),y0=Math.min.apply(0,ys),y1=Math.max.apply(0,ys),p=8;
+      cx.fillStyle='#fff';cx.fillRect(x+x0-p,y+y0-p,x1-x0+2*p,y1-y0+2*p);
+    }
+  }
+  pass(0,0,w,h);
+  /* tiled second pass catches small codes the full frame misses */
+  var tw=Math.round(w/2),th=Math.round(h/3);
+  for(var a=0;a<2;a++)for(var b=0;b<3;b++){
+    var x=Math.max(0,Math.round(a*w/2-tw*0.1)),y=Math.max(0,Math.round(b*h/3-th*0.1));
+    pass(x,y,Math.min(w-x,Math.round(tw*1.2)),Math.min(h-y,Math.round(th*1.2)));
+  }
+  return found;
+}
+$('file').onchange=async function(e){
+  var fs=Array.prototype.slice.call(e.target.files),added=0,tot=0;
+  for(var i=0;i<fs.length;i++){
+    msg('Scanning photo '+(i+1)+' of '+fs.length+'…');
+    await new Promise(function(r){setTimeout(r,30)});
+    try{var codes=findAll(await loadImg(fs[i]));tot+=codes.length;codes.forEach(function(c){if(add(c))added++})}catch(x){}
+  }
+  e.target.value='';
+  msg(tot?('Found '+tot+' code'+(tot>1?'s':'')+', added '+added+'.'):'No QR codes found. Try a sharper, closer, well-lit photo.',!tot);
+};
+
+/* export */
+async function save(name,data){
+  var d=null;try{d=await claude.use('downloads')}catch(e){}
+  if(!d){msg('Downloads aren’t available in this view. Open the artifact in claude.ai to export.',true);return}
+  try{await d.save({filename:name,data:data});msg('Saved '+name+'.')}catch(e){if(e&&e.code!=='declined')msg('Could not save: '+(e.message||e.code),true)}
+}
+var stamp=function(){return new Date().toISOString().slice(0,10)};
+$('xl').onclick=function(){
+  var ws=XLSX.utils.aoa_to_sheet(matrix()),wb=XLSX.utils.book_new();
+  ws['!cols']=matrix()[0].map(function(h,i){return {wch:i===1?20:i===2?40:16}});
+  XLSX.utils.book_append_sheet(wb,ws,'Scans');
+  save('qr-scans-'+stamp()+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}));
+};
+$('csv').onclick=function(){
+  var s=matrix().map(function(r){return r.map(function(x){return '"'+String(x).replace(/"/g,'""')+'"'}).join(',')}).join('\r\n');
+  save('qr-scans-'+stamp()+'.csv','\ufeff'+s);
+};
+render();
+})();
+</script>
+</body>
+</html>
